@@ -1,0 +1,54 @@
+# Opsera Configuration - Single Source of Truth (RULE 60)
+app_name: mall-maintenance
+tenant: opsera
+cloud_provider: aws
+region: us-west-2
+region_short: usw2
+
+# Cluster Configuration
+hub_cluster: argocd-usw2
+spoke_cluster: opsera-usw2-np
+argocd_server: argocd-usw2.agent.opsera.dev
+domain: agent.opsera.dev
+
+# Environment Configuration
+environments:
+  - name: dev
+    namespace: opsera-mall-maintenance-dev
+    deployment_strategy: rolling
+    replicas: 2
+    ingress_enabled: true
+    ingress_host: mall-maintenance-dev.agent.opsera.dev
+
+# ECR Configuration
+ecr_repository: mall-maintenance
+ecr_uri_template: "${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/mall-maintenance"
+
+# Security & Quality (Quick Setup Defaults)
+security:
+  gitleaks: warn
+  grype: warn
+
+quality:
+  sonarqube: skip
+
+# Integrations (Quick Setup Defaults)
+integrations:
+  slack: skip
+  jira: skip
+  newrelic: skip
+  prometheus: skip
+  datadog: skip
+
+# Deployment Configuration
+deployment:
+  health_check_path: /
+  health_check_port: 8080
+  container_port: 8080
+  service_port: 8080
+  image_pull_policy: Always
+
+# Git Configuration
+git:
+  branch: main
+  manifests_path: .opsera-mall-maintenance/k8s/overlays

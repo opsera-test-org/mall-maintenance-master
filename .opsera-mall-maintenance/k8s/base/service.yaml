@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mall-maintenance
+  labels:
+    app: mall-maintenance
+spec:
+  type: ClusterIP
+  selector:
+    app: mall-maintenance
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http

@@ -1,0 +1,328 @@
+name: Bootstrap Infrastructure - mall-maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_recreate:
+        description: 'Force recreate all resources'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  APP_NAME: mall-maintenance
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+  ARGOCD_SERVER: argocd-usw2.agent.opsera.dev
+  DEV_NAMESPACE: opsera-mall-maintenance-dev
+
+# RULE 148: Required permissions for git ops
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  setup-ecr:
+    name: Setup ECR Repository
+    runs-on: ubuntu-latest
+    outputs:
+      ecr_uri: ${{ steps.ecr.outputs.ecr_uri }}
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create ECR Repository
+        id: ecr
+        run: |
+          # RULE 147: Get AWS_ACCOUNT_ID dynamically
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${APP_NAME}"
+          echo "ecr_uri=${ECR_URI}" >> $GITHUB_OUTPUT
+
+          # RULE 75: Auto-create ECR repo if not exists
+          if ! aws ecr describe-repositories --repository-names ${APP_NAME} 2>/dev/null; then
+            echo "Creating ECR repository: ${APP_NAME}"
+            aws ecr create-repository \
+              --repository-name ${APP_NAME} \
+              --image-scanning-configuration scanOnPush=true \
+              --image-tag-mutability IMMUTABLE \
+              --tags Key=app,Value=${APP_NAME} Key=tenant,Value=${TENANT}
+            echo "✅ ECR repository created"
+          else
+            echo "✅ ECR repository already exists"
+          fi
+
+  create-config-folder:
+    name: Create Opsera Config Folder
+    runs-on: ubuntu-latest
+    needs: [setup-ecr]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Verify Config Structure
+        run: |
+          echo "✅ Checking .opsera-${APP_NAME} structure..."
+
+          if [ ! -d ".opsera-${APP_NAME}" ]; then
+            echo "❌ ERROR: .opsera-${APP_NAME} directory not found"
+            exit 1
+          fi
+
+          # Verify required directories
+          for dir in k8s/base k8s/overlays/dev argocd/dev; do
+            if [ ! -d ".opsera-${APP_NAME}/${dir}" ]; then
+              echo "❌ ERROR: .opsera-${APP_NAME}/${dir} not found"
+              exit 1
+            fi
+          done
+
+          # Verify required files
+          for file in opsera-config.yaml k8s/base/deployment.yaml k8s/base/service.yaml k8s/base/ingress.yaml argocd/dev/application.yaml; do
+            if [ ! -f ".opsera-${APP_NAME}/${file}" ]; then
+              echo "❌ ERROR: .opsera-${APP_NAME}/${file} not found"
+              exit 1
+            fi
+          done
+
+          echo "✅ All required files and directories exist"
+
+  update-manifests:
+    name: Update Configuration Files
+    runs-on: ubuntu-latest
+    needs: [setup-ecr, create-config-folder]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update ECR URI in Manifests
+        run: |
+          # RULE 147: Get AWS_ACCOUNT_ID dynamically in EACH job
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${APP_NAME}"
+
+          echo "Updating PLACEHOLDER_ECR_URI to: ${ECR_URI}"
+
+          # Update base deployment
+          sed -i "s|PLACEHOLDER_ECR_URI|${ECR_URI}|g" .opsera-${APP_NAME}/k8s/base/deployment.yaml
+
+          # Update dev overlay kustomization
+          sed -i "s|PLACEHOLDER_ECR_URI|${ECR_URI}|g" .opsera-${APP_NAME}/k8s/overlays/dev/kustomization.yaml
+
+          echo "✅ ECR URI updated in manifests"
+
+      - name: Update ArgoCD Application
+        run: |
+          # Get repo info
+          GITHUB_ORG=$(echo ${{ github.repository }} | cut -d'/' -f1)
+          GITHUB_REPO=$(echo ${{ github.repository }} | cut -d'/' -f2)
+
+          # Update ArgoCD application with actual repo URL
+          sed -i "s|GITHUB_ORG|${GITHUB_ORG}|g" .opsera-${APP_NAME}/argocd/dev/application.yaml
+          sed -i "s|GITHUB_REPO|${GITHUB_REPO}|g" .opsera-${APP_NAME}/argocd/dev/application.yaml
+
+          echo "✅ ArgoCD application updated with repo: ${GITHUB_ORG}/${GITHUB_REPO}"
+
+      - name: Commit Updated Manifests
+        run: |
+          git config --global user.name "Opsera Bot"
+          git config --global user.email "bot@opsera.io"
+
+          # RULE 143: Pull first, then changes, then commit/push
+          git pull --rebase origin main
+
+          git add .opsera-${APP_NAME}/
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            # RULE 111: Heredoc for commit messages with colons
+            git commit -m "$(cat <<'EOF'
+chore: Bootstrap infrastructure for mall-maintenance
+
+- Updated ECR URI in manifests
+- Configured ArgoCD application
+- Ready for first deployment
+
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+EOF
+)"
+            git push origin main
+            echo "✅ Manifests committed and pushed"
+          fi
+
+  create-ecr-pull-secret:
+    name: Create ECR Pull Secret
+    runs-on: ubuntu-latest
+    needs: [update-manifests]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Kubeconfig for Spoke Cluster
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_SPOKE }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+          # Verify connectivity
+          kubectl cluster-info
+          echo "✅ Connected to spoke cluster: ${SPOKE_CLUSTER}"
+
+      - name: Create Namespace
+        run: |
+          # RULE 69: Create namespace explicitly
+          kubectl create namespace ${DEV_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace created: ${DEV_NAMESPACE}"
+
+      - name: Create ECR Pull Secret
+        run: |
+          # RULE 147: Get AWS_ACCOUNT_ID dynamically
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_TOKEN=$(aws ecr get-login-password --region ${AWS_REGION})
+
+          # RULE 163: Refresh ECR pull secret
+          kubectl create secret docker-registry ecr-pull-secret \
+            --docker-server="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" \
+            --docker-username=AWS \
+            --docker-password="${ECR_TOKEN}" \
+            --namespace="${DEV_NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "✅ ECR pull secret created in ${DEV_NAMESPACE}"
+
+  register-repo-with-argocd:
+    name: Register Repository with ArgoCD
+    runs-on: ubuntu-latest
+    needs: [create-ecr-pull-secret]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Kubeconfig for Hub Cluster
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_HUB }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+          kubectl cluster-info
+          echo "✅ Connected to hub cluster: ${HUB_CLUSTER}"
+
+      - name: Create ArgoCD Repository Secret
+        run: |
+          # RULE 63: Bootstrap MUST create ArgoCD repository secret with GH_PAT
+          GITHUB_ORG=$(echo ${{ github.repository }} | cut -d'/' -f1)
+          GITHUB_REPO=$(echo ${{ github.repository }} | cut -d'/' -f2)
+          REPO_URL="https://github.com/${GITHUB_ORG}/${GITHUB_REPO}.git"
+
+          kubectl create secret generic repo-${APP_NAME} \
+            --namespace=argocd \
+            --from-literal=url="${REPO_URL}" \
+            --from-literal=username=git \
+            --from-literal=password="${{ secrets.GH_PAT }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl label secret repo-${APP_NAME} \
+            --namespace=argocd \
+            argocd.argoproj.io/secret-type=repository \
+            --overwrite
+
+          echo "✅ Repository registered with ArgoCD: ${REPO_URL}"
+
+  deploy-argocd-application:
+    name: Deploy ArgoCD Application
+    runs-on: ubuntu-latest
+    needs: [register-repo-with-argocd]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Kubeconfig for Hub Cluster
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_HUB }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Apply ArgoCD Application
+        run: |
+          # RULE 128a: Deploy ArgoCD application in bootstrap
+          kubectl apply -f .opsera-${APP_NAME}/argocd/dev/application.yaml
+
+          echo "✅ ArgoCD application deployed: ${APP_NAME}-dev"
+
+          # Wait for application to be created
+          sleep 10
+
+          # Check application status
+          kubectl get application ${APP_NAME}-dev -n argocd || echo "Application will sync automatically"
+
+  bootstrap-summary:
+    name: Bootstrap Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-argocd-application]
+    if: always()
+    steps:
+      - name: Generate Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<'EOF'
+          # 🚀 Bootstrap Complete - mall-maintenance
+
+          ## Infrastructure Created
+
+          | Component | Status | Details |
+          |-----------|--------|---------|
+          | ECR Repository | ✅ | mall-maintenance |
+          | Namespace | ✅ | opsera-mall-maintenance-dev |
+          | ECR Pull Secret | ✅ | ecr-pull-secret |
+          | ArgoCD Repo | ✅ | Registered with GH_PAT |
+          | ArgoCD App | ✅ | mall-maintenance-dev |
+
+          ## Configuration
+
+          - **Hub Cluster**: argocd-usw2
+          - **Spoke Cluster**: opsera-usw2-np
+          - **ArgoCD Server**: argocd-usw2.agent.opsera.dev
+          - **Ingress**: mall-maintenance-dev.agent.opsera.dev
+
+          ## Next Steps
+
+          1. **Trigger First Deployment**:
+             ```bash
+             gh workflow run "ci-build-push-mall-maintenance-dev.yaml"
+             ```
+
+          2. **Monitor ArgoCD**:
+             Visit: https://argocd-usw2.agent.opsera.dev
+
+          3. **Check Application**:
+             Visit: http://mall-maintenance-dev.agent.opsera.dev
+
+          ---
+          *Powered by Opsera Code-to-Cloud Enterprise v0.922*
+          EOF
