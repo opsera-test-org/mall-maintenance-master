@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opsera-mall-maintenance-dev
+  labels:
+    tenant: opsera
+    app: mall-maintenance
+    environment: dev
+    managed-by: opsera-c2c

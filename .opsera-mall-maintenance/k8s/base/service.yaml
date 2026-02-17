@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mall-maintenance
+  namespace: opsera-mall-maintenance-dev
+  labels:
+    tenant: opsera
+    app: mall-maintenance
+    managed-by: opsera-c2c
+spec:
+  type: ClusterIP
+  selector:
+    app: mall-maintenance
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP

@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mall-maintenance
+  namespace: opsera-mall-maintenance-dev
+  labels:
+    tenant: opsera
+    app: mall-maintenance
+    managed-by: opsera-c2c
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mall-maintenance
+  template:
+    metadata:
+      labels:
+        app: mall-maintenance
+        tenant: opsera
+    spec:
+      serviceAccountName: mall-maintenance-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+      containers:
+      - name: mall-maintenance
+        image: PLACEHOLDER_ECR_URI
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "8080"
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: mall-maintenance-config
+              key: ENVIRONMENT
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: mall-maintenance-config
+              key: NODE_ENV
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      imagePullSecrets:
+      - name: ecr-pull-secret

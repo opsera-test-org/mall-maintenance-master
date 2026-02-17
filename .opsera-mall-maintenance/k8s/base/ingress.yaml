@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mall-maintenance
+  namespace: opsera-mall-maintenance-dev
+  labels:
+    tenant: opsera
+    app: mall-maintenance
+    managed-by: opsera-c2c
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: mall-maintenance-dev.agent.opsera.dev
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: mall-maintenance
+            port:
+              number: 80
