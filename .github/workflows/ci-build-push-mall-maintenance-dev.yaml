@@ -149,17 +149,14 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            # RULE 111: Heredoc for commit messages
-            git commit -m "$(cat <<EOF
-deploy: Update ${ENVIRONMENT} image to ${{ needs.build-and-push.outputs.image_tag }}
+            # RULE 111: Commit message for deployment
+            git commit -m "deploy: Update ${ENVIRONMENT} image to ${{ needs.build-and-push.outputs.image_tag }}
 
 Environment: ${ENVIRONMENT}
 Image: ${{ needs.build-and-push.outputs.ecr_uri }}:${{ needs.build-and-push.outputs.image_tag }}
 Commit: ${{ github.sha }}
 
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
-EOF
-)"
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
             git push origin main
             echo "✅ Manifests pushed to repository"
           fi
