@@ -1,5 +1,6 @@
 name: Bootstrap Infrastructure - mall-maintenance
 
+# Manually triggerable workflow for infrastructure setup
 on:
   workflow_dispatch:
     inputs:
