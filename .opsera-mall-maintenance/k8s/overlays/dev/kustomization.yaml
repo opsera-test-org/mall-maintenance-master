@@ -16,8 +16,8 @@ labels:
 
 images:
 - name: PLACEHOLDER_ECR_URI
-  newName: PLACEHOLDER_ECR_URI
-  newTag: latest
+  newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/mall-maintenance
+  newTag: 68d70b2-20260217-112820
 
 replicas:
 - name: mall-maintenance
