@@ -9,11 +9,6 @@ on:
         required: false
         type: boolean
         default: false
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/bootstrap-infrastructure-mall-maintenance.yaml'
 
 env:
   APP_NAME: mall-maintenance
