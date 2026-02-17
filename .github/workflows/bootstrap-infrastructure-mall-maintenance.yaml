@@ -156,13 +156,16 @@ jobs:
             echo "No changes to commit"
           else
             # RULE 111: Heredoc for commit messages with colons
-            git commit -m "chore: Bootstrap infrastructure for mall-maintenance
+            git commit -m "$(cat <<'EOF'
+chore: Bootstrap infrastructure for mall-maintenance
 
 - Updated ECR URI in manifests
 - Configured ArgoCD application
 - Ready for first deployment
 
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+EOF
+)"
             git push origin main
             echo "✅ Manifests committed and pushed"
           fi
